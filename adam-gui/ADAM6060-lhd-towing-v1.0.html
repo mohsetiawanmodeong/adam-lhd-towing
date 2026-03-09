@@ -1816,13 +1816,15 @@
                     diRecords = xmlDoc.getElementsByTagName("DI");
                     if (diRecords != null) {
                       for (var iCnt = 0; iCnt < diRecords.length; iCnt++) {
-                        iCh = diRecords[iCnt].getElementsByTagName("ID")[0].childNodes[0].nodeValue;
+                        iCh =
+                          diRecords[iCnt].getElementsByTagName("ID")[0]
+                            .childNodes[0].nodeValue;
                         if (iCh < diTotal)
-                          diStatus[iCh] = diRecords[iCnt].getElementsByTagName("VALUE")[0].childNodes[0].nodeValue;
+                          diStatus[iCh] =
+                            diRecords[iCnt].getElementsByTagName("VALUE")[0]
+                              .childNodes[0].nodeValue;
                       }
-                      // DI0 dikendalikan oleh toggle Parking Brake F#, jangan timpa dari device
-                      var togglePB = document.getElementById("toggleParkingBrakeF");
-                      if (togglePB) diStatus[0] = togglePB.classList.contains("on") ? 1 : 0;
+                      // Perbarui indikator berdasarkan status DI/DO aktual dari device
                       updateIndicatorBoxes();
                     } else {
                       // Kurangi log error dengan hanya mencatat di debug level
@@ -1885,14 +1887,15 @@
                     doRecords = xmlDoc.getElementsByTagName("DO");
                     if (doRecords != null) {
                       for (var iCnt = 0; iCnt < doRecords.length; iCnt++) {
-                        iCh = doRecords[iCnt].getElementsByTagName("ID")[0].childNodes[0].nodeValue;
+                        iCh =
+                          doRecords[iCnt].getElementsByTagName("ID")[0]
+                            .childNodes[0].nodeValue;
                         if (iCh < doTotal)
-                          doStatus[iCh] = doRecords[iCnt].getElementsByTagName("VALUE")[0].childNodes[0].nodeValue;
+                          doStatus[iCh] =
+                            doRecords[iCnt].getElementsByTagName("VALUE")[0]
+                              .childNodes[0].nodeValue;
                       }
-                      // DO0 dikendalikan toggle, jangan timpa dari device (agar icon & teks tetap muncul)
-                      var togglePB = document.getElementById("toggleParkingBrakeF");
-                      if (togglePB) doStatus[0] = togglePB.classList.contains("on") ? 1 : 0;
-                      diStatus[0] = doStatus[0];
+                      // DO/DI akan digambar sesuai status aktual dari device
                     } else {
                       // Kurangi log error dengan hanya mencatat di debug level
                       console.debug("DO: Tidak ada data DO ditemukan");
@@ -2185,7 +2188,9 @@
               }
             };
 
-            xmlHttp.open("POST", "digitaloutput/" + channel + "/value", true);
+            // Gunakan endpoint yang sama seperti referensi water-valve HTML:
+            // kirim DOx=0/1 ke digitaloutput/all/value
+            xmlHttp.open("POST", "digitaloutput/all/value", true);
             xmlHttp.send(szPostData);
           } catch (e) {
             console.log("Error setting DO status: " + e);
