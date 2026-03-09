@@ -1234,6 +1234,26 @@
         localStorage.removeItem("pageIsLoading");
       });
 
+      // Simpan log terbaru agar tidak hilang saat refresh (tanpa mengubah fitur Save/Autosave file)
+      var liveLogPersistTimer = null;
+      function persistLiveLogNow() {
+        try {
+          var logBox = document.getElementById("logBox");
+          if (!logBox) return;
+          localStorage.setItem("adam_live_log", logBox.value);
+          localStorage.setItem("adam_live_log_updated_at", String(Date.now()));
+        } catch (e) {
+          // ignore quota / storage errors
+        }
+      }
+      function schedulePersistLiveLog() {
+        if (liveLogPersistTimer) return;
+        liveLogPersistTimer = setTimeout(function () {
+          liveLogPersistTimer = null;
+          persistLiveLogNow();
+        }, 400);
+      }
+
       // Fungsi untuk menyimpan log ke file
       function saveLogToFile(forceDownload = false) {
         var logContent = document.getElementById("logBox").value;
@@ -1266,6 +1286,9 @@
         try {
           localStorage.setItem("adam_last_log", logContent);
           localStorage.setItem("adam_last_log_time", dateTimeString);
+          // Selaraskan juga live log agar refresh selalu memuat yang terbaru
+          localStorage.setItem("adam_live_log", logContent);
+          localStorage.setItem("adam_live_log_updated_at", String(Date.now()));
           document.getElementById("lastSaveTime").innerHTML =
             "Terakhir disimpan: " + now.toLocaleTimeString(undefined, { hour12: false }) + " (Autosaved)";
         } catch (e) {
@@ -1580,7 +1603,9 @@
         document.querySelector(".topnav-center h3").textContent = "LHD TOWING CONTROLLER " + loaderName;
 
         // Cek apakah ada log yang tersimpan di localStorage
-        var savedLog = localStorage.getItem("adam_last_log");
+        var savedLog =
+          localStorage.getItem("adam_live_log") ||
+          localStorage.getItem("adam_last_log");
         if (savedLog) {
           var logBox = document.getElementById("logBox");
           logBox.value = savedLog + "\n" + logBox.value;
@@ -1697,6 +1722,7 @@
         var message = value == 1 ? "Toggle ON: Parking Brake Front Released" : "Toggle OFF: Parking Brake Front Active";
         var logEntry = timestamp + " - " + message + "\n";
         logBox.value = logEntry + logBox.value;
+        schedulePersistLiveLog();
         sendToApi("DI", 0, value);
         sendToApi("DO", 0, value);
       }
@@ -1725,6 +1751,7 @@
             timestamp + " - CONNECTION ERROR: Device may be disconnected\n";
           logBox.value = errorEntry + logBox.value;
         }
+        schedulePersistLiveLog();
         sendToApi(type, channel, value);
       }
 
