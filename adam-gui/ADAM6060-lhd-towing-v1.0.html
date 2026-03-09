@@ -11,368 +11,7 @@
     <script>
       // Definisikan loaderName di awal agar bisa digunakan segera
       var loaderName = "9100"; // Variabel untuk nama loader
-      var serverName = "localhost"; // Variabel untuk nama server API
-      var apiPort = "4990"; // Variabel untuk port API
       document.title = "LHD TOWING CONTROLLER " + loaderName;
-
-      // Variabel untuk health check API
-      var lastApiCheckTime = 0;
-      var apiCheckInterval = 60000; // 1 menit
-      var isApiHealthy = true;
-
-      // Konfigurasi API sederhana
-      var apiConfig = {
-        url: "http://" + serverName + ":" + apiPort + "/api/createFMIACP",
-        auth: "Basic YWRtaW46cGFzc3dvcmQ="  // Base64 dari admin:password
-      };
-
-      // Array untuk menyimpan data ketika API tidak tersedia
-      var pendingData = [];
-      var lastPostAttempt = 0; // Waktu terakhir mencoba post ke API
-      var postInterval = 5000; // 5 detik interval antara post
-      var pendingDataLimit = 100; // Batasan jumlah data yang disimpan lokal
-
-      // Helper function untuk mendapatkan tipe dari kategori (DI0=parking brake, DO0=release)
-      function getTypeFromCategory(category, value) {
-        switch(category) {
-          case "DI-0":
-            return "PARKING_BRAKE_FRONT";
-          case "DO-0":
-            return "PARKING_BRAKE";
-          default:
-            return "";
-        }
-      }
-
-      // Helper function untuk memparse log message
-      function parseLogMessage(message) {
-        // Format: "09-03-2025 14:04:28 - Parking Brake Released OFF"
-        const parts = message.split(" - ");
-        if (parts.length < 2) {
-          console.log("Format pesan log tidak valid:", message);
-          return { timestamp: "", category: "", value: "0" };
-        }
-        
-        const timestamp = parts[0]; // "09-03-2025 14:04:28"
-        const statusMessage = parts[1]; // "Parking Brake Released OFF"
-        
-        let category = "";
-        let value = "0";
-        
-        if (statusMessage.includes("Toggle ON: Parking Brake Front Released") || statusMessage.includes("Toggle OFF: Parking Brake Front Active")
-            || statusMessage.includes("Parking brake released") || statusMessage.includes("Parking brake applied") || statusMessage.includes("Parking Brake Released") || statusMessage.includes("Parking Brake System")) {
-          category = "DO-0";
-          value = (statusMessage.includes("Toggle ON:") || statusMessage.includes("released")) && !statusMessage.includes("Toggle OFF:") && !statusMessage.includes("applied") && !statusMessage.includes("Active") ? "1" : "0";
-          console.log("Deteksi Parking brake:", value === "1" ? "released" : "applied");
-        } else {
-          console.log("Pesan tidak dikenali:", statusMessage);
-        }
-        
-        return {
-          timestamp: timestamp,
-          category: category,
-          value: value
-        };
-      }
-
-      // Fungsi untuk menyimpan data ke localStorage ketika API tidak tersedia
-      function storeDataLocally(data) {
-        lastPostAttempt = Date.now();
-        pendingData.push(data);
-        console.log("Menyimpan data lokal, total data tertunda:", pendingData.length);
-        
-        // Batasi jumlah data tertunda ke 1000 entri untuk menghindari memory issue
-        if (pendingData.length > 1000) {
-          pendingData = pendingData.slice(-1000);
-        }
-        
-        // Simpan ke localStorage
-        try {
-          localStorage.setItem('pendingData', JSON.stringify(pendingData));
-        } catch (e) {
-          console.log("Gagal menyimpan ke localStorage:", e);
-        }
-      }
-
-      // Fungsi untuk mengirim data yang tersimpan
-      function sendPendingData() {
-        if (pendingData.length === 0) return;
-        
-        console.debug("Mencoba mengirim", pendingData.length, "data tertunda");
-        
-        // Ambil data tertua (paling depan)
-        const dataToSend = pendingData[0];
-        
-        // Kirim data
-        var xhr = new XMLHttpRequest();
-        var endpoint = "http://" + serverName + ":" + apiPort + "/api/createFMIACP";
-        
-        xhr.open("POST", endpoint, true);
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.setRequestHeader("Authorization", "Basic YWRtaW46cGFzc3dvcmQ=");
-        xhr.timeout = 5000; // 5 detik timeout
-        
-        xhr.onload = function() {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            // Berhasil, hapus data dari array dan update localStorage
-            pendingData.shift();
-            localStorage.setItem('pendingData', JSON.stringify(pendingData));
-            console.debug("Berhasil mengirim data tertunda, tersisa:", pendingData.length);
-            
-            // Jika masih ada data, kirim lagi setelah interval
-            if (pendingData.length > 0) {
-              setTimeout(sendPendingData, postInterval);
-            }
-          } else {
-            console.debug("Gagal mengirim data tertunda:", xhr.status);
-            // Jangan mencoba lagi untuk sementara
-            setTimeout(sendPendingData, postInterval * 2);
-          }
-        };
-        
-        xhr.onerror = function() {
-          console.debug("Network error saat mengirim data tertunda");
-          // Jangan mencoba lagi untuk sementara
-          setTimeout(sendPendingData, postInterval * 2);
-        };
-        
-        xhr.ontimeout = function() {
-          console.debug("Timeout saat mengirim data tertunda");
-          // Jangan mencoba lagi untuk sementara
-          setTimeout(sendPendingData, postInterval * 2);
-        };
-        
-        try {
-          // Hapus properti _savedAt sebelum mengirim
-          const dataCopy = {...dataToSend};
-          delete dataCopy._savedAt;
-          xhr.send(JSON.stringify(dataCopy));
-        } catch (e) {
-          console.debug("Error saat mengirim data tertunda:", e);
-          setTimeout(sendPendingData, postInterval);
-        }
-      }
-
-      // Fungsi untuk mengirim data langsung ke API
-      function sendToApiDirect(data) {
-        var endpoint = "http://" + serverName + ":" + apiPort + "/api/createFMIACP";
-        console.log("Mengirim data ke: " + endpoint, data);
-        
-        var xhr = new XMLHttpRequest();
-        xhr.open("POST", endpoint, true);
-        xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
-        xhr.setRequestHeader("Authorization", "Basic YWRtaW46cGFzc3dvcmQ=");
-        xhr.timeout = 5000; // timeout setelah 5 detik
-        
-        xhr.onload = function() {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            console.log("Data berhasil dikirim ke API");
-            isApiHealthy = true;
-            lastPostAttempt = Date.now();
-          } else {
-            console.log("Gagal kirim data ke API. Status:", xhr.status);
-            storeDataLocally(data);
-          }
-        };
-        
-        xhr.onerror = function() {
-          console.log("Error koneksi API, menyimpan data lokal");
-          isApiHealthy = false;
-          storeDataLocally(data);
-        };
-        
-        xhr.ontimeout = function() {
-          console.log("Koneksi API timeout");
-          isApiHealthy = false;
-          storeDataLocally(data);
-        };
-        
-        try {
-          xhr.send(JSON.stringify(data));
-        } catch(e) {
-          console.log("Error saat kirim data:", e);
-          storeDataLocally(data);
-        }
-      }
-
-      // Fungsi untuk memeriksa kesehatan API dan mengirim data tertunda jika sehat
-      function checkApiHealth() {
-        // Jika belum waktunya memeriksa API, lewati
-        if (Date.now() - lastApiCheckTime < apiCheckInterval && lastApiCheckTime > 0) {
-          return;
-        }
-        
-        // Load data tertunda dari localStorage saat halaman dimuat
-        try {
-          const savedData = localStorage.getItem('pendingData');
-          if (savedData) {
-            pendingData = JSON.parse(savedData);
-            console.log("Memuat", pendingData.length, "data tertunda dari localStorage");
-          }
-        } catch (e) {
-          console.error("Gagal memuat data tertunda:", e);
-        }
-        
-        // Periksa kesehatan API dengan request GET ke /api/getFMIACP
-        var healthEndpoint = "http://" + serverName + ":" + apiPort + "/api/getFMIACP";
-        
-        var xhr = new XMLHttpRequest();
-        xhr.open("GET", healthEndpoint, true);
-        xhr.setRequestHeader("Authorization", "Basic YWRtaW46cGFzc3dvcmQ=");
-        
-        xhr.timeout = 5000; // 5 detik timeout
-        
-        xhr.onload = function() {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            console.log("API tersedia dan sehat");
-            isApiHealthy = true;
-            lastApiCheckTime = Date.now();
-            sendPendingData();
-          } else {
-            console.log("API tidak sehat:", xhr.status);
-            isApiHealthy = false;
-            lastApiCheckTime = Date.now();
-          }
-        };
-        
-        xhr.onerror = function() {
-          console.log("API tidak tersedia (network error)");
-          isApiHealthy = false;
-          lastApiCheckTime = Date.now();
-        };
-        
-        xhr.ontimeout = function() {
-          console.log("API timeout");
-          isApiHealthy = false;
-          lastApiCheckTime = Date.now();
-        };
-        
-        try {
-          xhr.send();
-        } catch(e) {
-          console.log("Error saat health check:", e);
-          isApiHealthy = false;
-          lastApiCheckTime = Date.now();
-        }
-      }
-
-      // Fungsi untuk mengirim data ke API dengan fallback ke penyimpanan lokal
-      function sendToApi(type, channel, value) {
-        let category = `${type}-${channel}`;
-        
-        // Siapkan data sesuai format API
-        var data = {
-          MACHINE_NAME: loaderName,
-          START_TIME: getCurrentTimeISO(),
-          CATEGORY: category,
-          TYPE: getTypeFromCategory(category, value),
-          MEASUREMENT: "BIT",
-          VALUE: value.toString()
-        };
-
-        // Log ke console untuk debugging
-        console.log("Mengirim data ke API:", data);
-        
-        // Cek apakah ada TYPE untuk data ini
-        if (!data.TYPE || data.TYPE === "") {
-          console.log("Data tidak dikirim: TYPE kosong untuk kategori", category);
-          return;
-        }
-        
-        // Pastikan format waktu sudah benar
-        try {
-          // Validasi waktu untuk memastikan format sudah benar
-          const timeTest = new Date(data.START_TIME);
-          if (isNaN(timeTest.getTime())) {
-            // Format waktu tidak valid, gunakan format yang lebih sederhana
-            data.START_TIME = new Date().toISOString().replace('T', ' ').replace('Z', ' +00:00');
-            console.log("Format waktu dikoreksi:", data.START_TIME);
-          }
-        } catch (e) {
-          console.log("Error validasi waktu:", e);
-          data.START_TIME = new Date().toISOString().replace('T', ' ').replace('Z', ' +00:00');
-        }
-        
-        // Jika ada data tertunda dan API sehat, kirim data tertunda terlebih dahulu
-        if (pendingData.length > 0 && isApiHealthy) {
-          sendPendingData();
-        }
-        
-        // Kirim data baru ke API
-        sendToApiDirect(data);
-      }
-
-      // Fungsi untuk menampilkan notifikasi (dinonaktifkan)
-      function showNotification(message, color) {
-        // Console log only, tidak menampilkan di UI
-        console.log(message);
-      }
-      
-      // Inisialisasi untuk mengurangi error: coba kirim data tertunda secara berkala
-      window.addEventListener('load', function() {
-        // Tunda inisialisasi untuk mengurangi masalah loading
-        setTimeout(function() {
-          // Test koneksi API terlebih dahulu
-          console.log("Mencoba koneksi ke API...");
-          var testXhr = new XMLHttpRequest();
-          var healthEndpoint = "http://" + serverName + ":" + apiPort + "/api/getAppStatusFMIACP";
-          
-          testXhr.open("GET", healthEndpoint, true);
-          testXhr.setRequestHeader("Authorization", "Basic YWRtaW46cGFzc3dvcmQ=");
-          testXhr.timeout = 5000;
-          
-          testXhr.onload = function() {
-            if (testXhr.status >= 200 && testXhr.status < 300) {
-              console.log("Koneksi API berhasil!");
-              isApiHealthy = true;
-            } else {
-              console.log("API tersedia tetapi status error:", testXhr.status);
-              isApiHealthy = false;
-            }
-          };
-          
-          testXhr.onerror = function() {
-            console.log("Tidak dapat terhubung ke API, akan menyimpan data lokal");
-            isApiHealthy = false;
-          };
-          
-          testXhr.ontimeout = function() {
-            console.log("Koneksi API timeout");
-            isApiHealthy = false;
-          };
-          
-          try {
-            testXhr.send();
-          } catch(e) {
-            console.log("Error saat koneksi API:", e);
-            isApiHealthy = false;
-          }
-          
-          // Load data tertunda dari localStorage
-          try {
-            const savedData = localStorage.getItem('pendingData');
-            if (savedData) {
-              pendingData = JSON.parse(savedData);
-              console.debug("Memuat", pendingData.length, "data tertunda dari localStorage");
-              
-              // Jika ada data tertunda, coba kirim setelah halaman dimuat
-              if (pendingData.length > 0) {
-                setTimeout(sendPendingData, 10000); // Tunggu 10 detik sebelum mencoba kirim data tertunda
-              }
-            }
-          } catch (e) {
-            console.debug("Gagal memuat data tertunda:", e);
-            pendingData = [];
-          }
-          
-          // Set interval untuk mencoba kirim data tertunda secara berkala
-          setInterval(function() {
-            if (pendingData.length > 0 && Date.now() - lastPostAttempt > postInterval * 2) {
-              sendPendingData();
-            }
-          }, 30000); // Cek tiap 30 detik
-        }, 5000);
-      });
 
       // Fungsi untuk meredam error gambar atau resource yang tidak ditemukan
       window.addEventListener('error', function(e) {
@@ -384,89 +23,6 @@
           return true;
         }
       }, true);
-
-      // Tambahkan fungsi untuk mendapatkan waktu saat ini dalam format ISO 8601 dengan timezone
-      function getCurrentTimeISO() {
-        var now = new Date();
-        // Format: YYYY-MM-DD HH:MM:SS +TZ
-        // Gunakan format yang lebih sederhana dan dipastikan tidak menyebabkan masalah parsing
-        return now.toISOString()
-          .replace('T', ' ')  // Ganti T dengan spasi
-          .replace('Z', '')   // Hapus Z
-          .split('.')[0] +    // Hilangkan milidetik
-          ' +00:00';         // Tambahkan timezone secara eksplisit
-      }
-
-      // Fungsi untuk mengirim data ke API
-      function sendToApi(type, channel, value) {
-        let category = `${type}-${channel}`;
-        
-        // Siapkan data sesuai format API
-        var data = {
-          MACHINE_NAME: loaderName,
-          START_TIME: getCurrentTimeISO(),
-          CATEGORY: category,
-          TYPE: getTypeFromCategory(category, value),
-          MEASUREMENT: "BIT",
-          VALUE: value.toString()
-        };
-
-        // Hanya log ke console browser, tidak menampilkan di UI
-        console.debug("Mengirim data ke API:", data);
-        
-        // Jika belum waktunya mengirim data baru, simpan saja
-        if (Date.now() - lastPostAttempt < postInterval) {
-          console.debug("Terlalu cepat untuk post baru, menyimpan lokal");
-          storeDataLocally(data);
-          return;
-        }
-        
-        // Coba kirim langsung, jika gagal akan disimpan lokal oleh sendToApiDirect
-        sendToApiDirect(data);
-      }
-
-      // Fungsi untuk memperbarui log box berdasarkan perubahan status
-      function updateLogBox(newMessage) {
-        var logBox = document.getElementById("logBox");
-        var now = new Date();
-        
-        // Format: tanggal-bulan-tahun jam 24h
-        var year = now.getFullYear();
-        var month = (now.getMonth() + 1).toString().padStart(2, '0');
-        var day = now.getDate().toString().padStart(2, '0');
-        var hours = now.getHours().toString().padStart(2, '0');
-        var minutes = now.getMinutes().toString().padStart(2, '0');
-        var seconds = now.getSeconds().toString().padStart(2, '0');
-        var timestamp = `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
-        
-        // Tambahkan pesan baru ke log box (hanya jika bukan pesan sukses API)
-        if (!newMessage.includes("berhasil dikirim ke API")) {
-          var message = timestamp + " - " + newMessage;
-          
-          // Tambahkan pesan ke logBox terlebih dahulu
-          logBox.value += message + "\n";
-          logBox.scrollTop = logBox.scrollHeight;
-          
-          // Kemudian parsing pesan log untuk kirim ke API
-          const logData = parseLogMessage(message);
-          if (logData.category && logData.category !== "") {
-            // Kirim data ke API
-            const apiData = {
-              MACHINE_NAME: loaderName,
-              START_TIME: getCurrentTimeISO(),
-              CATEGORY: logData.category,
-              TYPE: getTypeFromCategory(logData.category),
-              MEASUREMENT: "BIT",
-              VALUE: logData.value
-            };
-            
-            console.log("Mengirim data dari log ke API:", apiData);
-            setTimeout(function() {
-              sendToApi(logData.category.split("-")[0], logData.category.split("-")[1], logData.value);
-            }, 100); // Sedikit delay untuk memastikan UI update dulu
-          }
-        }
-      }
     </script>
     <style>
       /* CSS yang dioptimalkan untuk ADAM module */
@@ -584,7 +140,7 @@
          Lebih besar = panel lebih tinggi. graph-container height (bawah) mempengaruhi sisa ruang. */
       .container {
         display: grid;
-        grid-template-columns: 35fr 15fr 50fr;
+        grid-template-columns: 33fr 17fr 50fr;
         grid-template-rows: minmax(420px, 1fr) auto;
         flex: 1;
         padding: 20px;
@@ -666,8 +222,9 @@
       .toggle-group label {
         display: block;
         font-weight: bold;
-        margin-bottom: 8px;
-        color: #e0e0e0;
+        font-size: 1.1rem;
+        margin-bottom: 16px;
+        color: #ffffff;
       }
 
       .toggle-group .toggle-row {
@@ -680,40 +237,75 @@
       .toggle-switch {
         position: relative;
         display: inline-block;
-        width: 56px;
-        height: 28px;
-        background-color: #ccc;
-        border-radius: 28px;
+        width: 124px;
+        height: 56px;
+        background-color: #dc2626; /* OFF = red */
+        border-radius: 56px;
         cursor: pointer;
         transition: background-color 0.3s;
         vertical-align: middle;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
       }
 
       .toggle-switch.on {
-        background-color: #6f42c1;
+        background-color: #16a34a; /* ON = green */
+      }
+
+      .toggle-switch .toggle-text {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 1.2rem;
+        font-weight: bold;
+        letter-spacing: 0.4px;
+        color: rgba(255, 255, 255, 0.95);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+        pointer-events: none;
+        user-select: none;
+        z-index: 1;
+        transition: opacity 0.2s ease;
+      }
+
+      .toggle-switch .toggle-text-on {
+        left: 14px;
+        opacity: 0.25;
+      }
+      .toggle-switch.on .toggle-text-on {
+        opacity: 1;
+      }
+
+      .toggle-switch .toggle-text-off {
+        right: 14px;
+        opacity: 1;
+      }
+      .toggle-switch.on .toggle-text-off {
+        opacity: 0.25;
       }
 
       .toggle-switch::after {
         content: "";
         position: absolute;
-        width: 24px;
-        height: 24px;
-        left: 2px;
-        top: 2px;
+        width: 48px;
+        height: 48px;
+        left: 4px;
+        top: 4px;
         background-color: white;
         border-radius: 50%;
         transition: transform 0.3s;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        z-index: 2;
       }
 
       .toggle-switch.on::after {
-        transform: translateX(28px);
+        transform: translateX(68px);
       }
 
       .toggle-label-onoff {
-        font-size: 12px;
+        font-size: 14px;
+        font-weight: 700;
         color: #e0e0e0;
         vertical-align: middle;
+        display: none; /* ON/OFF sekarang tampil di dalam toggle */
       }
 
       @media (max-width: 992px) {
@@ -825,13 +417,13 @@
       /* Loader icon */
       .loader-icon {
         position: absolute;
-        width: 110px;
+        width: 120px;
         height: auto;
         max-height: 92%;
         object-fit: contain;
-        max-width: 140px;
+        max-width: 150px;
         min-width: 90px;
-        left: 50%;
+        left: 42%;
         top: 50%;
         transform: translate(-50%, -50%);
       }
@@ -840,7 +432,7 @@
       .parking-brake-block {
         position: absolute;
         right: 15px;
-        top: 42%;
+        top: 40%;
         transform: translateY(-50%);
         display: flex;
         flex-direction: column;
@@ -850,7 +442,7 @@
       }
 
       .parking-brake-icon {
-        width: 50px;
+        width: 80px;
         height: auto;
         opacity: 0.3;
         transition: opacity 0.3s ease;
@@ -865,7 +457,7 @@
       }
 
       .parking-brake-status-text {
-        font-size: 14px;
+        font-size: 16px;
         font-weight: 500;
         color: #ffffff;
         text-align: center;
@@ -1096,12 +688,7 @@
           <div class="loader-header">LHD TOWING STATUS</div>
           <div class="loader-container">
             <div class="polling-info-wrapper">
-              <div class="polling-info" id="DIPOLL" style="color: #ffa500">
-                DI: Polling 0 times...
-              </div>
-              <div class="polling-info" id="DOPOLL" style="color: #ff3300">
-                DO: Polling 0 times...
-              </div>
+              <!-- polling counter intentionally removed (lihat grafik DO di canvas) -->
             </div>
             <!-- Blok parking brake: icon + teks status di samping kanan loader -->
             <div class="parking-brake-block">
@@ -1120,11 +707,11 @@
               class="loader-icon"
             />
           </div>
-          <!-- Hidden elements untuk DI0, DI2 (canvas), DO0 -->
+          <!-- Hidden elements untuk DO0..DO2 (status tracking) -->
           <div style="display: none">
-            <img id="DI0" src="" alt="0" class="status-light" />
-            <img id="DI2" src="" alt="0" class="status-light" />
             <img id="DO0" src="" alt="0" class="status-light" />
+            <img id="DO1" src="" alt="0" class="status-light" />
+            <img id="DO2" src="" alt="0" class="status-light" />
           </div>
         </div>
       </div>
@@ -1134,7 +721,10 @@
         <div class="toggle-group">
           <label>Release Parking Brake F#</label>
           <div class="toggle-row">
-            <div id="toggleParkingBrakeF" class="toggle-switch" role="button" tabindex="0" aria-pressed="false" title="DI0 - ON = Release Parking Brake (DO0)"></div>
+            <div id="toggleParkingBrakeF" class="toggle-switch" role="button" tabindex="0" aria-pressed="false" title="DO0 - ON = Release Parking Brake">
+              <span class="toggle-text toggle-text-on">ON</span>
+              <span class="toggle-text toggle-text-off">OFF</span>
+            </div>
             <span id="toggleParkingBrakeFLabel" class="toggle-label-onoff">OFF</span>
           </div>
         </div>
@@ -1178,7 +768,7 @@
 
     <div class="footer-container">
       <div class="footer-copyright">
-        <p>Copyright &copy; 2026 by Trakindo Technology Dept.</p>
+        <p>Copyright &copy; 2026 by Trakindo Technology</p>
       </div>
     </div>
 
@@ -1186,22 +776,17 @@
       var canvas;
       var ctx;
       var scanInterval = 1000;
-      var diTotal = 3; // DI0=parking brake, DI2=tampil di canvas (tengah)
-      var doTotal = 1; // DO0=release parking brake
+      var doTotal = 3; // DO0..DO2
       var padSize = 30;
       var gridSize = 16;
       var columnInc = 0;
       var stepSize = 8;
       var fontSize = 10;
       var lightOnSrc, lightOffSrc;
-      var diStatus;
       var doStatus;
       var cntMaxTotal, cntIndex, cntTotal;
-      var diDataArray;
       var doDataArray;
-      var diPolling, diPollingCount;
-      var doPolling, doPollingCount;
-      var diFailCount, diWaitCount;
+      var doPolling;
       var doFailCount, doWaitCount;
       var maxWait = 5;
       var maxFail = 3;
@@ -1339,24 +924,11 @@
       }
 
       function AdamTrend_Init() {
-        diStatus = new Array(diTotal);
         doStatus = new Array(doTotal);
-        diPollingCount = 0;
-        doPollingCount = 0;
-        diPolling = 0;
         doPolling = 0;
-        diFailCount = 0;
         doFailCount = 0;
-        diWaitCount = 0;
         doWaitCount = 0;
 
-        for (var iCh = 0; iCh < diTotal; iCh++) {
-          diStatus[iCh] = 0;
-          if (document.getElementById("DI" + iCh)) {
-            document.getElementById("DI" + iCh).src = lightOffSrc;
-          }
-        }
-        //
         for (var iCh = 0; iCh < doTotal; iCh++) {
           doStatus[iCh] = 0;
           if (document.getElementById("DO" + iCh)) {
@@ -1368,10 +940,8 @@
         try {
           ctx = canvas.getContext("2d");
           canvas.width = document.getElementById("TBL0").offsetWidth;
-          // Menghitung tinggi canvas yang sesuai berdasarkan jumlah channel aktif
-          var activeChannels = 2; // DI0 dan DI2 (tengah)
-          var totalChannels = activeChannels + doTotal;
-          canvas.height = padSize * 2 + gridSize * totalChannels;
+          // Tinggi canvas mengikuti jumlah DO channel yang ditampilkan
+          canvas.height = padSize * 2 + gridSize * doTotal;
 
           // deal with data
           cntMaxTotal =
@@ -1389,7 +959,6 @@
       function AdamTrend_DrawLabel() {
         var iCnt, x, y1, y2;
 
-        diDataArray = new Array(diTotal);
         doDataArray = new Array(doTotal);
         ctx.font = fontSize + "px Arial";
 
@@ -1397,24 +966,10 @@
         x = canvas.width - padSize + 1;
         y1 = padSize + (gridSize + fontSize) / 2;
 
-        // Gambar label untuk DI-0 dan DI-2 dengan spacing yang lebih rapi
-        var activeChannels = 0;
-        for (var iCh = 0; iCh < diTotal; iCh++) {
-          diDataArray[iCh] = new Array(cntMaxTotal);
-          if (iCh !== 1) {
-            // Skip DI-1
-            y2 = y1 + gridSize * activeChannels;
-            ctx.fillText("DI-" + iCh, 0, y2);
-            ctx.fillText("DI-" + iCh, x, y2);
-            activeChannels++;
-          }
-        }
-
-        // Gambar label untuk DO-0 dengan posisi yang sesuai
-        y1 = padSize + gridSize * 2 + (gridSize + fontSize) / 2;
+        // Gambar label untuk DO-0..DO-2
         for (var iCh = 0; iCh < doTotal; iCh++) {
           doDataArray[iCh] = new Array(cntMaxTotal);
-          y2 = y1;
+          y2 = y1 + gridSize * iCh;
           ctx.fillText("DO-" + iCh, 0, y2);
           ctx.fillText("DO-" + iCh, x, y2);
         }
@@ -1453,33 +1008,22 @@
           else cntIndex = 0;
         }
         //
-        for (var iCh = 0; iCh < diTotal; iCh++)
-          diDataArray[iCh][cntIndex] = diStatus[iCh];
         for (var iCh = 0; iCh < doTotal; iCh++)
           doDataArray[iCh][cntIndex] = doStatus[iCh];
       }
 
-      function AdamTrend_RefreshDataLine(iType, iCh) {
+      function AdamTrend_RefreshDataLine(iCh) {
         var iCnt, iIdx, x, yOn, yOff;
         var preX, preVal, val;
         var y = new Array(2);
         if (cntTotal > 1) {
-          if (iType == 0) {
-            // DI
-            // Hitung posisi y berdasarkan channel yang aktif
-            var activeChannelIndex = iCh === 0 ? 0 : 1; // DI-0 = index 0, DI-2 = index 1
-            y[0] = padSize + gridSize + gridSize * activeChannelIndex; // channel OFF
-            y[1] =
-              padSize + gridSize + gridSize * activeChannelIndex - gridSize / 2; // channel ON
-            ctx.strokeStyle = "#FFA500";
-            ctx.fillStyle = "#FFA500";
-          } else {
-            // DO-0 - tetap merah (DI = orange)
-            y[0] = padSize + gridSize * 3 - 2; // DO-0 OFF (sedikit di atas border)
-            y[1] = padSize + gridSize * 3 - gridSize / 2; // DO-0 ON
-            ctx.strokeStyle = "#FF3300";
-            ctx.fillStyle = "#FF3300";
-          }
+          // DO-0..DO-2
+          y[0] = padSize + gridSize * (iCh + 1) - 2; // OFF
+          y[1] = padSize + gridSize * (iCh + 1) - gridSize / 2; // ON
+          var doColors = ["#FF3300", "#1A73E8", "#34A853"];
+          var color = doColors[iCh] || "#FF3300";
+          ctx.strokeStyle = color;
+          ctx.fillStyle = color;
 
           iCnt = 0;
           iIdx = cntIndex;
@@ -1488,8 +1032,7 @@
           while (iCnt < cntTotal) {
             x = canvas.clientWidth - padSize - stepSize * iCnt - 1;
             if (x < padSize) x = padSize;
-            if (iType == 0) val = parseInt(diDataArray[iCh][iIdx], 10) || 0;
-            else val = parseInt(doDataArray[iCh][iIdx], 10) || 0;
+            val = parseInt(doDataArray[iCh][iIdx], 10) || 0;
 
             if (iCnt == 0) ctx.moveTo(x, y[val]);
             else {
@@ -1547,14 +1090,7 @@
         columnInc += stepSize;
         if (columnInc >= gridSize) columnInc -= gridSize;
         // draw data line
-        for (var iCh = 0; iCh < diTotal; iCh++) {
-          // Skip DI-1, hanya tampilkan DI-0 dan DI-2
-          if (iCh !== 1) {
-            AdamTrend_RefreshDataLine(0, iCh);
-          }
-        }
-        for (var iCh = 0; iCh < doTotal; iCh++)
-          AdamTrend_RefreshDataLine(1, iCh);
+        for (var iCh = 0; iCh < doTotal; iCh++) AdamTrend_RefreshDataLine(iCh);
         // draw border
         ctx.strokeStyle = "#E6E6FA";
         ctx.lineWidth = 2;
@@ -1574,15 +1110,7 @@
         AdamTrend_Init();
         if (ctx != null) AdamTrend_DrawLabel();
 
-        // Set initial status untuk DI dan DO elements
-        for (var iCh = 0; iCh < diTotal; iCh++) {
-          diStatus[iCh] = 0; // Inisialisasi status
-          if (document.getElementById("DI" + iCh)) {
-            document.getElementById("DI" + iCh).src = lightOffSrc;
-            document.getElementById("DI" + iCh).alt = "0";
-          }
-        }
-
+        // Set initial status untuk DO elements
         for (var iCh = 0; iCh < doTotal; iCh++) {
           doStatus[iCh] = 0; // Inisialisasi status
           if (document.getElementById("DO" + iCh)) {
@@ -1620,18 +1148,9 @@
         }
 
         // Debug log untuk status awal
-        console.log("Initial DI status:", diStatus);
         console.log("Initial DO status:", doStatus);
 
-        // Kirim status awal ke API
-        // Kirim status DI-0 (parking brake toggle), DI-2 (machine), DO-0 (release parking brake)
-        sendToApi("DI", 0, diStatus[0]);
-        sendToApi("DO", 0, doStatus[0]);
-
-        // Log ke console bahwa data awal telah dikirim (tidak ke logBox)
-        console.log("Status awal dikirim ke API");
-
-        // Sync toggle Parking Brake F# (DI0) dengan doStatus[0]
+        // Sync toggle Parking Brake F# dengan doStatus[0]
         var togglePB = document.getElementById("toggleParkingBrakeF");
         var labelPB = document.getElementById("toggleParkingBrakeFLabel");
         if (togglePB && labelPB) {
@@ -1646,25 +1165,20 @@
           }
         }
 
-        // Event: Toggle Parking Brake F# = DI0, ON -> DO0 = 1 (release brake)
+        // Event: Toggle Parking Brake F# (direct) -> DO0
         if (togglePB) {
           function handleParkingBrakeFToggle() {
             var isOn = togglePB.classList.toggle("on");
             var newVal = isOn ? 1 : 0;
             togglePB.setAttribute("aria-pressed", isOn ? "true" : "false");
             labelPB.textContent = isOn ? "ON" : "OFF";
-            diStatus[0] = newVal;
-            doStatus[0] = newVal; // DI0 ON -> DO0 ON (release brake), update UI segera
-            if (document.getElementById("DI0")) {
-              document.getElementById("DI0").alt = newVal;
-              document.getElementById("DI0").src = newVal == 1 ? lightOnSrc : lightOffSrc;
-            }
+            doStatus[0] = newVal; // update UI segera (sebelum polling)
             if (document.getElementById("DO0")) {
               document.getElementById("DO0").alt = newVal;
               document.getElementById("DO0").src = newVal == 1 ? lightOnSrc : lightOffSrc;
             }
             setDOStatus(0, newVal); // kirim ke ADAM device
-            addParkingBrakeLog(newVal); // satu baris log yang mudah dipahami + kirim ke API
+            addParkingBrakeLog(newVal); // satu baris log yang mudah dipahami
             updateIndicatorBoxes();
           }
           togglePB.addEventListener("click", handleParkingBrakeFToggle);
@@ -1681,7 +1195,6 @@
       }
 
       function pageOnTimer() {
-        httpGetDiData();
         httpGetDoData();
         if (ctx != null) {
           AdamTrend_UpdateData();
@@ -1691,15 +1204,9 @@
         updateIndicatorBoxes();
         checkAutoSave();
 
-        if (diFailCount == maxFail) {
-          document.getElementById("BTN0").disabled = true;
-          // Hanya simpan ke localStorage tanpa download untuk kasus error
-          saveLogToFile(false);
-          alert(
-            "DI polling has failed " + maxFail + " times, polling suspended!"
-          );
-        } else if (doFailCount == maxFail) {
-          document.getElementById("BTN0").disabled = true;
+        if (doFailCount == maxFail) {
+          var btn0 = document.getElementById("BTN0");
+          if (btn0) btn0.disabled = true;
           // Hanya simpan ke localStorage tanpa download untuk kasus error
           saveLogToFile(false);
           alert(
@@ -1723,11 +1230,9 @@
         var logEntry = timestamp + " - " + message + "\n";
         logBox.value = logEntry + logBox.value;
         schedulePersistLiveLog();
-        sendToApi("DI", 0, value);
-        sendToApi("DO", 0, value);
       }
 
-      // Update fungsi updateLogBox untuk juga mengirim data ke API
+      // Update log box berdasarkan perubahan status DO (polling)
       function updateLogBox(type, channel, value) {
         var logBox = document.getElementById("logBox");
         var now = new Date();
@@ -1738,7 +1243,7 @@
           day + "-" + month + "-" + year + " " + now.toLocaleTimeString(undefined, { hour12: false });
         var message = "";
 
-        // DO0 (parking brake) - DI0 pakai addParkingBrakeLog
+        // DO0 (parking brake) - pakai addParkingBrakeLog
         if (type === "DO" && channel === 0) {
           message = value == 1 ? "Toggle ON: Parking Brake Front Released" : "Toggle OFF: Parking Brake Front Active";
         }
@@ -1746,33 +1251,15 @@
           var logEntry = timestamp + " - " + message + "\n";
           logBox.value = logEntry + logBox.value;
         }
-        if (diFailCount > 0 || doFailCount > 0) {
+        if (doFailCount > 0) {
           var errorEntry =
             timestamp + " - CONNECTION ERROR: Device may be disconnected\n";
           logBox.value = errorEntry + logBox.value;
         }
         schedulePersistLiveLog();
-        sendToApi(type, channel, value);
       }
 
       function pageUpdateLights() {
-        for (var iCh = 0; iCh < diTotal; iCh++) {
-          if (iCh === 0 || iCh === 2) {
-            var diElement = document.getElementById("DI" + iCh);
-            if (diElement) {
-              if (diElement.alt == "0" && diStatus[iCh] == 1) {
-                diElement.alt = "1";
-                diElement.src = lightOnSrc;
-                if (iCh === 0) updateLogBox("DI", iCh, 1);
-              } else if (diElement.alt == "1" && diStatus[iCh] == 0) {
-                diElement.alt = "0";
-                diElement.src = lightOffSrc;
-                if (iCh === 0) updateLogBox("DI", iCh, 0);
-              }
-            }
-          }
-        }
-
         for (var iCh = 0; iCh < doTotal; iCh++) {
           var doElement = document.getElementById("DO" + iCh);
           if (doElement) {
@@ -1790,77 +1277,6 @@
 
         // Tambahkan panggilan ke updateIndicatorBoxes di akhir fungsi
         updateIndicatorBoxes();
-      }
-
-      function httpGetDiData() {
-        var xmlHttp = null;
-
-        try {
-          if (diPolling == 0) {
-            diWaitCount = 0;
-            if (window.XMLHttpRequest) {
-              xmlHttp = new XMLHttpRequest();
-            } else {
-              xmlHttp = new ActiveXObject("Microsoft.XMLHTTP");
-            }
-            xmlHttp.onreadystatechange = function () {
-              var szPoll;
-              var xmlDoc;
-              var diRecords;
-              var iCh;
-
-              if (xmlHttp.readyState == 4) {
-                if (xmlHttp.status == 200) {
-                  xmlDoc = xmlHttp.responseXML;
-                  if (xmlDoc.documentElement.attributes[0].nodeValue == "OK") {
-                    diRecords = xmlDoc.getElementsByTagName("DI");
-                    if (diRecords != null) {
-                      for (var iCnt = 0; iCnt < diRecords.length; iCnt++) {
-                        iCh =
-                          diRecords[iCnt].getElementsByTagName("ID")[0]
-                            .childNodes[0].nodeValue;
-                        if (iCh < diTotal)
-                          diStatus[iCh] =
-                            diRecords[iCnt].getElementsByTagName("VALUE")[0]
-                              .childNodes[0].nodeValue;
-                      }
-                      // Perbarui indikator berdasarkan status DI/DO aktual dari device
-                      updateIndicatorBoxes();
-                    } else {
-                      // Kurangi log error dengan hanya mencatat di debug level
-                      console.debug("DI: Tidak ada data DI ditemukan");
-                    }
-                  } else {
-                    // Kurangi log error dengan hanya mencatat di debug level
-                    console.debug("DI: Status bukan OK");
-                  }
-                } else {
-                  // Kurangi log error dengan hanya mencatat di debug level
-                  console.debug("DI: HTTP status error:", xmlHttp.status);
-                }
-                diPolling = 0;
-                diFailCount = 0;
-              }
-            };
-            // Gunakan path relatif untuk akses ke device sendiri
-            xmlHttp.open("GET", "/digitalinput/all/value", true);
-            xmlHttp.send();
-            diPolling = 1;
-            diPollingCount++;
-            document.getElementById("DIPOLL").innerHTML = "DI: Polling " + diPollingCount + " times...";
-          } else {
-            diWaitCount++;
-            if (diWaitCount == maxWait) {
-              diFailCount++;
-              if (diFailCount < maxFail) {
-                diPolling = 0;
-              }
-            }
-          }
-        } catch (e) {
-          diPolling = 0;
-          console.debug("Digital Input polling error:", e);
-        }
       }
 
       function httpGetDoData() {
@@ -1895,7 +1311,7 @@
                             doRecords[iCnt].getElementsByTagName("VALUE")[0]
                               .childNodes[0].nodeValue;
                       }
-                      // DO/DI akan digambar sesuai status aktual dari device
+                      // DO akan digambar sesuai status aktual dari device
                     } else {
                       // Kurangi log error dengan hanya mencatat di debug level
                       console.debug("DO: Tidak ada data DO ditemukan");
@@ -1916,8 +1332,6 @@
             xmlHttp.open("GET", "/digitaloutput/all/value", true);
             xmlHttp.send();
             doPolling = 1;
-            doPollingCount++;
-            document.getElementById("DOPOLL").innerHTML = "DO: Polling " + doPollingCount + " times...";
           } else {
             doWaitCount++;
             if (doWaitCount == maxWait) {
@@ -2188,8 +1602,7 @@
               }
             };
 
-            // Gunakan endpoint yang sama seperti referensi water-valve HTML:
-            // kirim DOx=0/1 ke digitaloutput/all/value
+            // Sama seperti P#22: toggle hanya kirim DO.
             xmlHttp.open("POST", "digitaloutput/all/value", true);
             xmlHttp.send(szPostData);
           } catch (e) {
