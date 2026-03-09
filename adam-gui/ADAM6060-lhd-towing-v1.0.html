@@ -1032,12 +1032,7 @@
         />
       </div>
       <div class="topnav-center">
-        <h3>
-          ⚠️ICA CPS - LHD
-          <script>
-            document.write(loaderName);
-          </script>
-        </h3>
+        <h3>LHD TOWING CONTROLLER</h3>
       </div>
       <div class="topnav-right">
         <button id="refreshBtn" class="nav-btn">↻</button>
@@ -1071,6 +1066,7 @@
               class="parking-brake-icon"
               alt="Parking Brake"
             />
+            <div id="parkingBrakeStatusText" class="parking-brake-status-text">Parking Brake Front Applied</div>
             <!-- src="assets/front safe zone base64.webp" -->
             <img
               src="data:image/webp;base64,UklGRqQBAABXRUJQVlA4WAoAAAAQAAAAXwAABgEAQUxQSEIAAAABT6Agkg3qPf8O+s9IpYlRIyICX62ucwtFkaRGY4EXDtCADTykoiWxfj83ov8TwA+2vmoAAG6rlvwn/wl1c6yaXBFWUDggPAEAAFAPAJ0BKmAABwE+kUKdSaWjoyEnX0nosBIJTdwuPBpbs5MB/gLjAyADwAAEQJ3VD0KXXC8nEU+7cznkDuWA55BCYZv/qZlkNGLdr8RWbFOLVnO1Vjh5nNiCEwzf/UzLIaMW7X4is2KcWrOdqrHDzObEEJhm/9smaQWze2KRkbn0kmvwAPnYPj3I596ZtOGfuDYOGadBSre1JDBXmlPM7ueX5ocucGP9tSUS89gy8NjVV+mr/E7U3/x1F+FRRd4ck/y3rolf4+l0VaxhkfWrHVAqgmUthpN//TcvDQpf+54UDgSFnciRbmh6Ipw6CI9shAS1DdxJTh0ER7ZCAlqG7iSnDoI0Art9b/a/k3PUa24b/Ce9If80/5/4txvf/UMWZ/Z+s4RC73COhyrFc0YK/4uH5uf/6NH//0iMyAA="
@@ -1111,6 +1107,20 @@
         </div>
       </div>
 
+      <div class="middle-panel">
+        <div class="loader-header">TOGGLE</div>
+        <div class="toggle-group">
+          <label>Parking Brake F#</label>
+          <div id="toggleParkingBrakeF" class="toggle-switch" role="button" tabindex="0" aria-pressed="false" title="DI0 - ON = Release Parking Brake (DO0)"></div>
+          <span id="toggleParkingBrakeFLabel" class="toggle-label-onoff">OFF</span>
+        </div>
+        <div class="toggle-group">
+          <label>Machine</label>
+          <div id="toggleMachine" class="toggle-switch" role="button" tabindex="0" aria-pressed="false" title="DI2"></div>
+          <span id="toggleMachineLabel" class="toggle-label-onoff">OFF</span>
+        </div>
+      </div>
+
       <div class="right-panel">
         <div class="log-header">
           <span>SYSTEM LOG</span>
@@ -1139,8 +1149,8 @@
 
     <div class="footer-container">
       <div class="footer-copyright">
-        <p>Collision Prevention System v2.0</p>
-        <p>Copyright &copy; 2025 by Trakindo Technology Dept.</p>
+        <p>LHD TOWING CONTROLLER v1.0</p>
+        <p>Copyright &copy; 2026 by Trakindo Technology Dept.</p>
       </div>
     </div>
 
@@ -1551,8 +1561,7 @@
         }
 
         // Update judul halaman dengan nama loader
-        document.querySelector(".topnav-center h3").textContent =
-          "⚠️ICA CPS - LHD " + loaderName;
+        document.querySelector(".topnav-center h3").textContent = "LHD TOWING CONTROLLER";
 
         // Cek apakah ada log yang tersimpan di localStorage
         var savedLog = localStorage.getItem("adam_last_log");
@@ -1583,6 +1592,52 @@
 
         // Log ke console bahwa data awal telah dikirim (tidak ke logBox)
         console.log("Status awal dikirim ke API");
+
+        // Sync toggle Parking Brake F# (DI0) dengan doStatus[0]
+        var togglePB = document.getElementById("toggleParkingBrakeF");
+        var labelPB = document.getElementById("toggleParkingBrakeFLabel");
+        if (togglePB && labelPB) {
+          if (doStatus[0] == 1) {
+            togglePB.classList.add("on");
+            togglePB.setAttribute("aria-pressed", "true");
+            labelPB.textContent = "ON";
+          } else {
+            togglePB.classList.remove("on");
+            togglePB.setAttribute("aria-pressed", "false");
+            labelPB.textContent = "OFF";
+          }
+        }
+
+        // Event: Toggle Parking Brake F# = DI0, ON -> DO0 = 1 (release brake)
+        if (togglePB) {
+          function handleParkingBrakeFToggle() {
+            var isOn = togglePB.classList.toggle("on");
+            var newVal = isOn ? 1 : 0;
+            togglePB.setAttribute("aria-pressed", isOn ? "true" : "false");
+            labelPB.textContent = isOn ? "ON" : "OFF";
+            diStatus[0] = newVal;
+            doStatus[0] = newVal; // DI0 ON -> DO0 ON (release brake), update UI segera
+            if (document.getElementById("DI0")) {
+              document.getElementById("DI0").alt = newVal;
+              document.getElementById("DI0").src = newVal == 1 ? lightOnSrc : lightOffSrc;
+            }
+            if (document.getElementById("DO0")) {
+              document.getElementById("DO0").alt = newVal;
+              document.getElementById("DO0").src = newVal == 1 ? lightOnSrc : lightOffSrc;
+            }
+            setDOStatus(0, newVal); // kirim ke ADAM device
+            updateLogBox("DI", 0, newVal);
+            updateLogBox("DO", 0, newVal);
+            updateIndicatorBoxes();
+          }
+          togglePB.addEventListener("click", handleParkingBrakeFToggle);
+          togglePB.addEventListener("keydown", function (e) {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              handleParkingBrakeFToggle();
+            }
+          });
+        }
 
         // Mulai timer untuk polling
         pageOnTimer();
@@ -1635,8 +1690,8 @@
           if (channel === 0) {
             message =
               value == 1
-                ? "WARNING Wall Collision FRONT ON"
-                : "WARNING Wall Collision FRONT OFF";
+                ? "Parking Brake Front: ON"
+                : "Parking Brake Front: OFF";
           } else if (channel === 2) {
             message =
               value == 1
@@ -1729,6 +1784,9 @@
                         if (iCh < diTotal)
                           diStatus[iCh] = diRecords[iCnt].getElementsByTagName("VALUE")[0].childNodes[0].nodeValue;
                       }
+                      // DI0 dikendalikan oleh toggle Parking Brake F#, jangan timpa dari device
+                      var togglePB = document.getElementById("toggleParkingBrakeF");
+                      if (togglePB) diStatus[0] = togglePB.classList.contains("on") ? 1 : 0;
                       updateIndicatorBoxes();
                     } else {
                       // Kurangi log error dengan hanya mencatat di debug level
@@ -1795,6 +1853,8 @@
                         if (iCh < doTotal)
                           doStatus[iCh] = doRecords[iCnt].getElementsByTagName("VALUE")[0].childNodes[0].nodeValue;
                       }
+                      // Sinkronkan DI0 dengan DO0 (toggle Parking Brake F# = DO0)
+                      diStatus[0] = doStatus[0];
                     } else {
                       // Kurangi log error dengan hanya mencatat di debug level
                       console.debug("Digital Output: Tidak ada data DO ditemukan");
@@ -2003,12 +2063,29 @@
 
         // Update parking brake berdasarkan doStatus[0]
         var parkingBrake = document.getElementById("parkingBrakeIcon");
+        var statusTextEl = document.getElementById("parkingBrakeStatusText");
         if (doStatus[0] == 1) {
           parkingBrake.style.display = "block";
           parkingBrake.classList.add("on");
+          if (statusTextEl) statusTextEl.textContent = "Parking Brake Front Released";
         } else {
           parkingBrake.style.display = "none";
           parkingBrake.classList.remove("on");
+          if (statusTextEl) statusTextEl.textContent = "Parking Brake Front Applied";
+        }
+        // Sinkronkan toggle Parking Brake F# dengan DO0 (supaya konsisten setelah polling)
+        var togglePB = document.getElementById("toggleParkingBrakeF");
+        var labelPB = document.getElementById("toggleParkingBrakeFLabel");
+        if (togglePB && labelPB) {
+          if (doStatus[0] == 1) {
+            togglePB.classList.add("on");
+            togglePB.setAttribute("aria-pressed", "true");
+            labelPB.textContent = "ON";
+          } else {
+            togglePB.classList.remove("on");
+            togglePB.setAttribute("aria-pressed", "false");
+            labelPB.textContent = "OFF";
+          }
         }
       }
 
